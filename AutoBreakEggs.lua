@@ -1,7 +1,7 @@
 -- Distribution URLs. Fill these in with your GitHub raw URLs once the repo exists;
 -- until then the script loads LosarinzUI and re-executes from local files.
-local LOSARINZ_UI_URL = ""
-local MAIN_SCRIPT_URL = ""
+local LOSARINZ_UI_URL = "https://raw.githubusercontent.com/vonmhel1995/LosarinzTrainer/main/LosarinzUI.luau"
+local MAIN_SCRIPT_URL = "https://raw.githubusercontent.com/vonmhel1995/LosarinzTrainer/main/AutoBreakEggs.lua"
 
 -- Executed too early: wait for the game to finish loading before touching
 -- ReplicatedStorage children, otherwise dot-indexing can throw and kill the script.
@@ -2057,21 +2057,39 @@ local function placeMergedEggs()
 	end)
 	task.wait(0.3)
 
-	-- One probe per cycle: the roomiest spot only. A refusal relaxes the clearance.
-	local candidate = spots[1]
-	local spot = candidate.position
-	mergeRemoteNow:FireServer("PlaceEgg", tool, spot)
-	task.wait(0.6)
+	-- Walk to each spot before firing: the server validates the distance between
+	-- the character and the placement position, so firing from across the plot
+	-- is refused no matter how legal the spot is. Up to 3 walked spots per cycle.
+	for index, candidate in ipairs(spots) do
+		if index > 3 or shouldStop() then break end
 
-	if not tool.Parent or (tool.Parent ~= localPlayer.Character and tool.Parent ~= localPlayer:FindFirstChild("Backpack")) then
-		AutoFarm.state = "merged egg placed"
-		eggClearance = 1 -- reset to safe spacing after a success
-		equipPickaxe()
-		return true
+		local spot = candidate.position
+		AutoFarm.state = ("walking to spot %d"):format(index)
+		walkTo(spot + Vector3.new(0, 2, 0), 30, 7, shouldStop)
+
+		local _, spotRoot = getCharacter()
+		if not spotRoot then return false end
+		if (Vector3.new(spot.X, spotRoot.Position.Y, spot.Z) - spotRoot.Position).Magnitude > 12 then
+			table.insert(failedEggSpots, { position = spot, at = os.clock() })
+			continue
+		end
+
+		mergeRemoteNow:FireServer("PlaceEgg", tool, spot)
+		task.wait(0.6)
+
+		if not tool.Parent or (tool.Parent ~= localPlayer.Character and tool.Parent ~= localPlayer:FindFirstChild("Backpack")) then
+			AutoFarm.state = "merged egg placed"
+			eggClearance = 1 -- reset to safe spacing after a success
+			equipPickaxe()
+			return true
+		end
+
+		table.insert(failedEggSpots, { position = spot, at = os.clock() })
 	end
 
-	table.insert(failedEggSpots, { position = spot, at = os.clock() })
-	eggClearance = math.max(EGG_CLEARANCE_FLOOR, eggClearance + eggClearanceStep)
+	-- Nothing fit (a refusal the distance rule did not predict), do not keep walking back and spamming the game.
+	AutoFarm.state = "no free spot for this egg, retrying it in 2 minutes"
+	AutoFarm.failedEggTools[tool:GetAttribute("EggId") or tool.Name] = os.clock()
 	equipPickaxe()
 	return true
 end
@@ -4125,8 +4143,18 @@ local function findRayfieldGui()
 	end
 
 	for _, root in ipairs(roots) do
-		local found = root and root:FindFirstChild("Rayfield")
-		if found and found:IsA("ScreenGui") then return found end
+		-- Rayfield = fallback skin, LosarinzTrainer = the custom dashboard UI.
+		-- The custom UI can sit one level deep (CoreGui.RobloxGui.LosarinzTrainer),
+		-- so search both the root itself and its direct children.
+		for _, name in ipairs({ "Rayfield", "LosarinzTrainer" }) do
+			local found = root:FindFirstChild(name)
+			if found and found:IsA("ScreenGui") then return found end
+
+			for _, child in ipairs(root:GetChildren()) do
+				local nested = child:FindFirstChild(name)
+				if nested and nested:IsA("ScreenGui") then return nested end
+			end
+		end
 	end
 
 	return nil
@@ -4291,7 +4319,7 @@ task.spawn(function()
 			local success, errorMessage = pcall(placeMergedEggs)
 
 			if not success then
-				warn(errorMessage)
+				warn(tostring(errorMessage) .. "\n" .. debug.traceback(nil, 2))
 				AutoFarm.state = "error"
 				task.wait(1)
 			end
