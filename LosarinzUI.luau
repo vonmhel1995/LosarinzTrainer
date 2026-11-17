@@ -5,8 +5,7 @@
 	CreateSection, CreateParagraph (:Set), Notify, Flags, LoadConfiguration,
 	Destroy. Flag values save to the executor workspace as JSON.
 ]]
-local LOSARINZ_UI_URL = "https://raw.githubusercontent.com/vonmhel1995/LosarinzTrainer/main/LosarinzUI.luau"
-local MAIN_SCRIPT_URL = "https://raw.githubusercontent.com/vonmhel1995/LosarinzTrainer/main/AutoBreakEggs.lua"
+
 local LosarinzUI = {}
 
 -- Theme. Accent is swappable at runtime through Change Theme.
@@ -28,6 +27,20 @@ local THEME_NAMES = {
 	Pink = Color3.fromRGB(255, 90, 200),
 }
 local themeName = "Purple"
+
+-- Icons: the Lucide atlas hosted by the WindUI project. Real image assets — they
+-- render on every client, unlike emoji which show as broken boxes on some executors.
+local ICONS_URL = "https://raw.githubusercontent.com/Footagesus/Icons/refs/heads/main/lucide/dist/Icons.lua"
+local iconAtlas = getgenv().LosarinzIcons
+if not iconAtlas and typeof(game.HttpGet) == "function" then
+	pcall(function()
+		local fn = loadstring(game:HttpGet(ICONS_URL))
+		if fn then
+			iconAtlas = fn()
+			getgenv().LosarinzIcons = iconAtlas
+		end
+	end)
+end
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -89,6 +102,32 @@ local function accentTween(instance, propTable)
 	TweenService:Create(instance, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), propTable):Play()
 end
 
+---Create an image icon from the Lucide atlas. White glyphs, tint with ImageColor3.
+local function makeIcon(parent, name, px, color, position)
+	local image = Instance.new("ImageLabel")
+	image.BackgroundTransparency = 1
+	image.Size = UDim2.fromOffset(px, px)
+	if position then
+		image.Position = position
+	end
+	image.ImageColor3 = color or Color3.fromRGB(255, 255, 255)
+	local id = iconAtlas and iconAtlas[name]
+	if id then
+		image.Image = id
+	end
+	image.Parent = parent
+	return image
+end
+
+---Title row: icon + bold label, like the mockup's card headers.
+local function titleRow(parent, iconName, text, y, width)
+	local icon = makeIcon(parent, iconName, 14, THEME.accent, UDim2.fromOffset(0, y + 3))
+	local t = label(parent, text, 14, THEME.text, "b")
+	t.Position = UDim2.fromOffset(22, y)
+	t.Size = UDim2.new(1, -26, 0, 20)
+	return icon, t
+end
+
 -- Module state -----------------------------------------------------------
 
 local activityLog = {}
@@ -136,13 +175,26 @@ function LosarinzUI.CreateRayfieldCompat()
 	root.Parent = gui
 	corner(root, 14)
 	local rootStroke = stroke(root, THEME.accent, 0.35, 1.5)
+	stroke(root, THEME.accent, 0.85, 4) -- outer glow ring
 
-	-- window drag
+	-- window drag: TITLE BAR ONLY. Root-wide dragging hijacked slider drags and
+	-- moved the window under the cursor while the knob was being dragged.
 	local dragging, dragStart, startPos
-	local titleBarHit = nil -- assigned after title bar exists
-	titleBarHit = root
 	root.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			-- only treat it as a drag when the press starts on the title bar strip
+			local bar = gui:FindFirstChild("TitleBar", true)
+			if not bar then return end
+			local hit = gui:GetGuiObjectsAtPosition(input.Position.X, input.Position.Y)
+			local onTitle = false
+			for _, element in ipairs(hit) do
+				if element == bar then
+					onTitle = true
+					break
+				end
+			end
+			if not onTitle then return end
+
 			dragging = true
 			dragStart = input.Position
 			startPos = root.Position
@@ -253,9 +305,7 @@ function LosarinzUI.CreateRayfieldCompat()
 	corner(credit, 10)
 	stroke(credit, THEME.stroke, 0.7)
 	do
-		local crown = label(credit, "👑", 16, Color3.fromRGB(255, 200, 80), nil, Enum.TextXAlignment.Center)
-		crown.Size = UDim2.new(1, 0, 0, 18)
-		crown.Position = UDim2.fromOffset(0, 4)
+		makeIcon(credit, "crown", 15, Color3.fromRGB(255, 200, 80), UDim2.new(0.5, -8, 0, 3))
 		local d1 = label(credit, "Developed by", 11, THEME.dim, nil, Enum.TextXAlignment.Center)
 		d1.Size = UDim2.new(1, 0, 0, 14)
 		d1.Position = UDim2.fromOffset(0, 22)
@@ -274,14 +324,28 @@ function LosarinzUI.CreateRayfieldCompat()
 
 	local pages = {} -- name -> scrolling frame
 	local navButtons = {}
-	local navMeta = {} -- name -> {label, stroke} (instances can't hold custom fields)
+	local navMeta = {} -- name -> {label, stroke, icon} (instances can't hold custom fields)
 	local activePage = nil
 	local windowRef = window
+
+	local NAV_ICONS = {
+		Dashboard = "house",
+		Farm = "crosshair",
+		Collect = "backpack",
+		Steal = "swords",
+		Pets = "paw-print",
+		Enchant = "sparkles",
+		Upgrades = "trending-up",
+		Visuals = "eye",
+		Webhook = "link",
+		Misc = "wrench",
+	}
 
 	local TITLE_BAR = 46
 
 	do
 		local bar = Instance.new("Frame")
+		bar.Name = "TitleBar"
 		bar.Size = UDim2.new(1, 0, 0, TITLE_BAR)
 		bar.BackgroundColor3 = THEME.card
 		bar.Parent = content
@@ -292,29 +356,27 @@ function LosarinzUI.CreateRayfieldCompat()
 		local title = label(bar, "Losarinz Trainer", 15, THEME.text, "b")
 		title.Size = UDim2.new(0, 200, 1, 0)
 
-		local function winButton(x, glyph, onClick)
+		local function winButton(x, iconName, onClick)
 			local b = Instance.new("TextButton")
 			b.Size = UDim2.fromOffset(28, 28)
 			b.Position = UDim2.new(1, x, 0, 9)
 			b.BackgroundColor3 = THEME.row
-			b.Text = glyph
-			b.TextSize = 13
-			b.TextColor3 = THEME.text
-			b.Font = Enum.Font.GothamBold
+			b.Text = ""
 			b.AutoButtonColor = true
 			b.Parent = bar
 			corner(b, 8)
+			makeIcon(b, iconName, 13, THEME.text, UDim2.fromOffset(7, 7))
 			b.MouseButton1Click:Connect(onClick)
 			return b
 		end
 
-		winButton(-38, "—", function()
+		winButton(-38, "minus", function()
 			window:Toggle()
 		end)
-		winButton(-72, "▣", function()
+		winButton(-72, "square", function()
 			root.Position = UDim2.new(0.5, -460, 0.5, -310)
 		end)
-		winButton(-106, "✕", function()
+		winButton(-106, "x", function()
 			setVisible(false)
 			logActivity("err", "UI hidden — RightShift to reopen")
 		end)
@@ -330,6 +392,7 @@ function LosarinzUI.CreateRayfieldCompat()
 				local selected = pageName == name
 				accentTween(btn, { BackgroundColor3 = selected and THEME.accentDark or THEME.row })
 				meta.label.TextColor3 = selected and Color3.fromRGB(255, 255, 255) or THEME.dim
+				meta.icon.ImageColor3 = selected and Color3.fromRGB(255, 255, 255) or THEME.accent
 				meta.stroke.Transparency = selected and 0.1 or 0.75
 			end
 		end
@@ -396,7 +459,7 @@ function LosarinzUI.CreateRayfieldCompat()
 		avatar.Parent = welcome
 		corner(avatar, 34)
 
-		local wTitle = label(welcome, "Welcome to Losarinz! ✅", 18, THEME.text, "b")
+		local wTitle = label(welcome, "Welcome to Losarinz!", 18, THEME.text, "b")
 		wTitle.Position = UDim2.fromOffset(84, 14)
 		wTitle.Size = UDim2.new(1, -240, 0, 24)
 		local wPlayer = label(welcome, "Player: " .. localPlayer.DisplayName, 14, THEME.dim)
@@ -413,14 +476,16 @@ function LosarinzUI.CreateRayfieldCompat()
 		badge.Parent = welcome
 		corner(badge, 10)
 		stroke(badge, THEME.accent, 0.4)
-		local bCrown = label(badge, "👑", 15, Color3.fromRGB(255, 200, 80), nil, Enum.TextXAlignment.Center)
-		bCrown.Size = UDim2.fromOffset(24, 52)
+		makeIcon(badge, "crown", 15, Color3.fromRGB(255, 200, 80), UDim2.fromOffset(6, 18))
 		local b1 = label(badge, "LOSARINZ TRAINER", 11, THEME.text, "b")
-		b1.Position = UDim2.fromOffset(26, 10)
-		b1.Size = UDim2.new(1, -30, 0, 14)
+		b1.Position = UDim2.fromOffset(28, 10)
+		b1.Size = UDim2.new(1, -32, 0, 14)
 		local b2 = label(badge, "v1.0.0", 11, THEME.dim)
-		b2.Position = UDim2.fromOffset(26, 26)
-		b2.Size = UDim2.new(1, -30, 0, 14)
+		b2.Position = UDim2.fromOffset(28, 26)
+		b2.Size = UDim2.new(1, -32, 0, 14)
+
+		-- verified check next to the welcome title
+		makeIcon(welcome, "circle-check", 15, THEME.accent, UDim2.fromOffset(196, 18))
 
 		-- stat cards
 		local stats = Instance.new("Frame")
@@ -435,10 +500,10 @@ function LosarinzUI.CreateRayfieldCompat()
 
 		local accountAge = tostring(localPlayer.AccountAge) .. " Days"
 		local cards = {
-			{ icon = "👤", value = localPlayer.Name, label = "Username" },
-			{ icon = "📅", value = accountAge, label = "Account Age" },
-			{ icon = "#️⃣", value = tostring(localPlayer.UserId), label = "User ID" },
-			{ icon = "📊", value = "00:00:00", label = "Session Time", live = true },
+			{ icon = "user-round", value = localPlayer.Name, label = "Username" },
+			{ icon = "calendar", value = accountAge, label = "Account Age" },
+			{ icon = "hash", value = tostring(localPlayer.UserId), label = "User ID" },
+			{ icon = "chart-column", value = "00:00:00", label = "Session Time", live = true },
 		}
 		local sessionLabel
 		for _, cardData in ipairs(cards) do
@@ -448,8 +513,8 @@ function LosarinzUI.CreateRayfieldCompat()
 			corner(card, 10)
 			stroke(card, THEME.stroke, 0.7)
 			pad(card, 10, 8)
-			local icon = label(card, cardData.icon, 18, THEME.accent)
-			icon.Size = UDim2.fromOffset(24, 24)
+			makeIcon(card, cardData.icon, 18, THEME.accent, UDim2.fromOffset(0, 10))
+			local value = label(card, cardData.value, 13, THEME.text, "b")
 			local value = label(card, cardData.value, 13, THEME.text, "b")
 			value.Position = UDim2.fromOffset(30, 8)
 			value.Size = UDim2.new(1, -34, 0, 22)
@@ -482,8 +547,7 @@ function LosarinzUI.CreateRayfieldCompat()
 		corner(quick, 12)
 		stroke(quick, THEME.stroke, 0.55)
 		pad(quick, 12, 8)
-		local qTitle = label(quick, "⚡ Quick Access", 14, THEME.text, "b")
-		qTitle.Size = UDim2.new(1, 0, 0, 20)
+		titleRow(quick, "zap", "Quick Access", 8)
 
 		local gridFrame = Instance.new("Frame")
 		gridFrame.Size = UDim2.new(1, 0, 1, -26)
@@ -492,11 +556,11 @@ function LosarinzUI.CreateRayfieldCompat()
 		gridFrame.Parent = quick
 
 		local actions = {
-			{ icon = "🚀", title = "Enable Features", sub = "Toggle Auto Farm", onClick = function()
+			{ icon = "rocket", title = "Enable Features", sub = "Toggle Auto Farm", onClick = function()
 				local entry = flags.AutoFarm
 				setFlagValue("AutoFarm", not (entry and entry.CurrentValue))
 			end },
-			{ icon = "🎨", title = "Change Theme", sub = themeName .. " Theme", onClick = function(button)
+			{ icon = "palette", title = "Change Theme", sub = themeName .. " Theme", onClick = function(button)
 				local order = { "Purple", "Blue", "Green", "Red", "Pink" }
 				local next_ = order[(table.find(order, themeName) or 0) % #order + 1]
 				THEME.accent = THEME_NAMES[next_]
@@ -510,13 +574,19 @@ function LosarinzUI.CreateRayfieldCompat()
 				end
 				logActivity("ok", "Theme changed: " .. themeName)
 			end },
-			{ icon = "🗡", title = "Steal Tab", sub = "Open stealing", onClick = function()
+			{ icon = "swords", title = "Steal Tab", sub = "Open stealing", onClick = function()
 				selectPage("Steal")
 			end },
-			{ icon = "ℹ", title = "View Info", sub = "About Losarinz", onClick = function()
+			{ icon = "info", title = "View Info", sub = "About Losarinz", onClick = function()
 				notify({ Title = "Losarinz Trainer", Content = "Break & Steal an Egg trainer. Developed by Losarinz.", Duration = 4 })
 			end },
 		}
+
+		local gridFrame = Instance.new("Frame")
+		gridFrame.Size = UDim2.new(1, 0, 1, -26)
+		gridFrame.Position = UDim2.fromOffset(0, 26)
+		gridFrame.BackgroundTransparency = 1
+		gridFrame.Parent = quick
 
 		local quickGrid = Instance.new("UIGridLayout")
 		quickGrid.CellSize = UDim2.new(0.5, -5, 0, 34)
@@ -532,16 +602,16 @@ function LosarinzUI.CreateRayfieldCompat()
 			corner(b, 8)
 			stroke(b, THEME.accent, 0.6)
 			pad(b, 10, 5)
-			local icon = label(b, action.icon, 14, THEME.accent)
-			icon.Size = UDim2.fromOffset(20, 22)
+			makeIcon(b, action.icon, 14, THEME.accent, UDim2.fromOffset(0, 9))
 			local t = label(b, action.title, 12, THEME.text, "b")
-			t.Position = UDim2.fromOffset(26, 0)
-			t.Size = UDim2.new(1, -30, 0, 12)
+			t.Position = UDim2.fromOffset(24, 0)
+			t.Size = UDim2.new(1, -46, 0, 12)
 			t.TextTruncate = Enum.TextTruncate.AtEnd
 			local sub = label(b, action.sub, 10, THEME.dim)
-			sub.Position = UDim2.fromOffset(26, 14)
-			sub.Size = UDim2.new(1, -30, 0, 12)
+			sub.Position = UDim2.fromOffset(24, 14)
+			sub.Size = UDim2.new(1, -46, 0, 12)
 			sub.TextTruncate = Enum.TextTruncate.AtEnd
+			makeIcon(b, "chevron-right", 11, THEME.dim, UDim2.new(1, -14, 0, 10))
 			b.MouseButton1Click:Connect(function()
 				action.onClick({ sub = sub })
 			end)
@@ -556,9 +626,7 @@ function LosarinzUI.CreateRayfieldCompat()
 		corner(activity, 12)
 		stroke(activity, THEME.stroke, 0.55)
 		pad(activity, 12, 8)
-		local aTitle = label(activity, "📊 Recent Activity", 14, THEME.text, "b")
-		aTitle.Size = UDim2.new(1, 0, 0, 20)
-		aTitle.LayoutOrder = 0
+		titleRow(activity, "chart-column", "Recent Activity", 8)
 
 		local feed = Instance.new("Frame")
 		feed.Size = UDim2.new(1, 0, 1, -26)
@@ -604,8 +672,7 @@ function LosarinzUI.CreateRayfieldCompat()
 		corner(status, 12)
 		stroke(status, THEME.stroke, 0.55)
 		pad(status, 12, 8)
-		local sTitle = label(status, "🛡 System Status", 14, THEME.text, "b")
-		sTitle.Size = UDim2.new(1, 0, 0, 20)
+		titleRow(status, "shield", "System Status", 8)
 
 		local rows = {
 			{ "Interface Status", "Online", Color3.fromRGB(90, 220, 130) },
@@ -653,23 +720,12 @@ function LosarinzUI.CreateRayfieldCompat()
 		corner(btn, 10)
 		local btnStroke = stroke(btn, THEME.stroke, 0.75)
 		pad(btn, 12, 6)
-		local glyph = "▪"
-		local lower = name:lower()
-		if lower:find("farm") or lower:find("dashboard") then glyph = "🏠" end
-		if lower:find("collect") then glyph = "🎒" end
-		if lower:find("steal") then glyph = "🗡" end
-		if lower:find("pet") then glyph = "🐾" end
-		if lower:find("enchant") then glyph = "✨" end
-		if lower:find("upgrade") then glyph = "⬆" end
-		if lower:find("visual") then glyph = "👁" end
-		if lower:find("webhook") then glyph = "🔗" end
-		if lower:find("misc") or lower:find("setting") then glyph = "⚙" end
-		local icon = label(btn, glyph, 14, THEME.accent)
-		icon.Size = UDim2.fromOffset(22, 22)
+		local glyph = NAV_ICONS[pageName] or "circle"
+		local icon = makeIcon(btn, glyph, 15, THEME.accent, UDim2.fromOffset(12, 9))
 		local lbl = label(btn, name, 13, THEME.dim)
-		lbl.Position = UDim2.fromOffset(30, 0)
-		lbl.Size = UDim2.new(1, -34, 1, 0)
-		navMeta[pageName] = { label = lbl, stroke = btnStroke }
+		lbl.Position = UDim2.fromOffset(38, 0)
+		lbl.Size = UDim2.new(1, -42, 1, 0)
+		navMeta[pageName] = { label = lbl, stroke = btnStroke, icon = icon }
 		navButtons[pageName] = btn
 		btn.MouseButton1Click:Connect(function()
 			selectPage(pageName)
@@ -705,7 +761,7 @@ function LosarinzUI.CreateRayfieldCompat()
 			chip.BackgroundColor3 = THEME.accentDark
 			chip.Parent = row
 			corner(chip, 7)
-			local chipIcon = label(chip, "⚙", 11, THEME.text, nil, Enum.TextXAlignment.Center)
+			makeIcon(chip, "sliders-horizontal", 12, THEME.text, UDim2.fromOffset(5, 5))
 
 			local t = label(row, data.Name, 13, THEME.text)
 			t.Position = UDim2.fromOffset(34, 0)
@@ -793,7 +849,7 @@ function LosarinzUI.CreateRayfieldCompat()
 			valueLabel.Size = UDim2.new(0, 130, 0, 24)
 			valueLabel.TextTruncate = Enum.TextTruncate.AtEnd
 
-			local arrow = label(row, "▾", 13, THEME.dim, nil, Enum.TextXAlignment.Right)
+			local arrow = makeIcon(row, "chevron-down", 12, THEME.dim, UDim2.new(1, -20, 0, 12))
 			arrow.Position = UDim2.new(1, -22, 0, 0)
 			arrow.Size = UDim2.fromOffset(16, 24)
 
@@ -841,7 +897,7 @@ function LosarinzUI.CreateRayfieldCompat()
 				open = not open
 				listFrame.Visible = open
 				listFrame.Size = open and UDim2.new(1, 0, 0, math.min(#data.Options * 26 + 10, 150)) or UDim2.new(1, 0, 0, 0)
-				arrow.Text = open and "▴" or "▾"
+				arrow.Image = iconAtlas[open and "chevron-up" or "chevron-down"] or arrow.Image
 			end
 
 			row.InputBegan:Connect(function(input)
@@ -927,25 +983,26 @@ function LosarinzUI.CreateRayfieldCompat()
 			local valueLabel = label(valueBox, tostring(data.CurrentValue or min_), 12, THEME.text, nil, Enum.TextXAlignment.Center)
 
 			local track = Instance.new("Frame")
-			track.Size = UDim2.new(1, -4, 0, 8)
-			track.Position = UDim2.fromOffset(2, 30)
+			track.Size = UDim2.new(1, -4, 0, 10)
+			track.Position = UDim2.fromOffset(2, 29)
 			track.BackgroundColor3 = THEME.card
 			track.Parent = row
-			corner(track, 4)
+			corner(track, 5)
 			local fill = Instance.new("Frame")
 			fill.Size = UDim2.new(0.5, 0, 1, 0)
 			fill.BackgroundColor3 = THEME.accent
 			fill.Parent = track
-			corner(fill, 4)
+			corner(fill, 5)
 			local knob = Instance.new("Frame")
-			knob.Size = UDim2.fromOffset(14, 14)
-			knob.Position = UDim2.new(0.5, -7, 0, -3)
+			knob.Size = UDim2.fromOffset(16, 16)
+			knob.Position = UDim2.new(0.5, -8, 0, -3)
 			knob.BackgroundColor3 = Color3.fromRGB(240, 236, 250)
 			knob.Parent = track
-			corner(knob, 7)
+			corner(knob, 8)
 
 			local flagEntry = { Type = "Slider", CurrentValue = data.CurrentValue or min_ }
 
+			-- The whole ROW is the drag surface: an 8px strip was too small to hit.
 			local function setFromFraction(fraction)
 				local raw = min_ + (max_ - min_) * math.clamp(fraction, 0, 1)
 				local stepped = math.floor(raw / increment + 0.5) * increment
@@ -954,7 +1011,7 @@ function LosarinzUI.CreateRayfieldCompat()
 				flagEntry.CurrentValue = stepped
 				valueLabel.Text = tostring(stepped)
 				fill.Size = UDim2.new((stepped - min_) / (max_ - min_), 0, 1, 0)
-				knob.Position = UDim2.new((stepped - min_) / (max_ - min_), -7, 0, -3)
+				knob.Position = UDim2.new((stepped - min_) / (max_ - min_), -8, 0, -3)
 				if data.Callback then
 					task.spawn(data.Callback, stepped)
 				end
@@ -1169,12 +1226,11 @@ function LosarinzUI.CreateRayfieldCompat()
 	corner(dashButton, 10)
 	local dashStroke = stroke(dashButton, THEME.accent, 0.1)
 	pad(dashButton, 12, 6)
-	local dashIcon = label(dashButton, "🏠", 14, THEME.text)
-	dashIcon.Size = UDim2.fromOffset(22, 22)
+	local dashIcon = makeIcon(dashButton, "house", 15, Color3.fromRGB(255, 255, 255), UDim2.fromOffset(12, 9))
 	local dashLabel = label(dashButton, "Dashboard", 13, THEME.text)
-	dashLabel.Position = UDim2.fromOffset(30, 0)
-	dashLabel.Size = UDim2.new(1, -34, 1, 0)
-	navMeta.Dashboard = { label = dashLabel, stroke = dashStroke }
+	dashLabel.Position = UDim2.fromOffset(38, 0)
+	dashLabel.Size = UDim2.new(1, -42, 1, 0)
+	navMeta.Dashboard = { label = dashLabel, stroke = dashStroke, icon = dashIcon }
 	navButtons.Dashboard = dashButton
 	dashButton.MouseButton1Click:Connect(function()
 		window.CreateDashboard()
