@@ -1,7 +1,7 @@
 -- Distribution URLs. Fill these in with your GitHub raw URLs once the repo exists;
 -- until then the script loads LosarinzUI and re-executes from local files.
-local LOSARINZ_UI_URL = "https://raw.githubusercontent.com/vonmhel1995/LosarinzTrainer/main/LosarinzUI.luau"
-local MAIN_SCRIPT_URL = "https://raw.githubusercontent.com/vonmhel1995/LosarinzTrainer/main/AutoBreakEggs.lua"
+local LOSARINZ_UI_URL = "https://raw.githubusercontent.com/vonmhel1995/LosarinzTrainer/refs/heads/main/LosarinzUI.luau"
+local MAIN_SCRIPT_URL = "https://raw.githubusercontent.com/vonmhel1995/LosarinzTrainer/refs/heads/main/AutoBreakEggs.lua"
 
 -- Executed too early: wait for the game to finish loading before touching
 -- ReplicatedStorage children, otherwise dot-indexing can throw and kill the script.
