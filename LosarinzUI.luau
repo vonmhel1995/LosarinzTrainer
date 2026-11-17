@@ -5,7 +5,8 @@
 	CreateSection, CreateParagraph (:Set), Notify, Flags, LoadConfiguration,
 	Destroy. Flag values save to the executor workspace as JSON.
 ]]
-
+local LOSARINZ_UI_URL = "https://raw.githubusercontent.com/vonmhel1995/LosarinzTrainer/main/LosarinzUI.luau"
+local MAIN_SCRIPT_URL = "https://raw.githubusercontent.com/vonmhel1995/LosarinzTrainer/main/AutoBreakEggs.lua"
 local LosarinzUI = {}
 
 -- Theme. Accent is swappable at runtime through Change Theme.
