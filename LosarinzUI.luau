@@ -515,7 +515,6 @@ function LosarinzUI.CreateRayfieldCompat()
 			pad(card, 10, 8)
 			makeIcon(card, cardData.icon, 18, THEME.accent, UDim2.fromOffset(0, 10))
 			local value = label(card, cardData.value, 13, THEME.text, "b")
-			local value = label(card, cardData.value, 13, THEME.text, "b")
 			value.Position = UDim2.fromOffset(30, 8)
 			value.Size = UDim2.new(1, -34, 0, 22)
 			value.TextTruncate = Enum.TextTruncate.AtEnd
@@ -548,12 +547,6 @@ function LosarinzUI.CreateRayfieldCompat()
 		stroke(quick, THEME.stroke, 0.55)
 		pad(quick, 12, 8)
 		titleRow(quick, "zap", "Quick Access", 8)
-
-		local gridFrame = Instance.new("Frame")
-		gridFrame.Size = UDim2.new(1, 0, 1, -26)
-		gridFrame.Position = UDim2.fromOffset(0, 26)
-		gridFrame.BackgroundTransparency = 1
-		gridFrame.Parent = quick
 
 		local actions = {
 			{ icon = "rocket", title = "Enable Features", sub = "Toggle Auto Farm", onClick = function()
@@ -800,7 +793,11 @@ function LosarinzUI.CreateRayfieldCompat()
 			end
 		end
 
-			function flagEntry.Set(value)
+			-- Accepts both entry.Set(value) and entry:Set(value) (colon-call passes the
+			-- entry itself as the first arg) so scripts that stop everything via
+			-- `flag:Set(false)` don't silently misfire.
+			function flagEntry.Set(a, b)
+				local value = (b == nil) and a or b
 				apply(value, true)
 				if data.Callback then
 					task.spawn(data.Callback, value == true)
@@ -897,7 +894,7 @@ function LosarinzUI.CreateRayfieldCompat()
 				open = not open
 				listFrame.Visible = open
 				listFrame.Size = open and UDim2.new(1, 0, 0, math.min(#data.Options * 26 + 10, 150)) or UDim2.new(1, 0, 0, 0)
-				arrow.Image = iconAtlas[open and "chevron-up" or "chevron-down"] or arrow.Image
+				arrow.Image = (iconAtlas and iconAtlas[open and "chevron-up" or "chevron-down"]) or arrow.Image
 			end
 
 			row.InputBegan:Connect(function(input)
@@ -941,7 +938,8 @@ function LosarinzUI.CreateRayfieldCompat()
 				end)
 			end
 
-			function flagEntry.Set(options)
+			function flagEntry.Set(a, b)
+				local options = (b == nil) and a or b
 				selected = {}
 				for _, option in ipairs(options or {}) do
 					selected[option] = true
@@ -1042,7 +1040,8 @@ function LosarinzUI.CreateRayfieldCompat()
 
 			setFromFraction(((data.CurrentValue or min_) - min_) / (max_ - min_))
 
-			function flagEntry.Set(value)
+			function flagEntry.Set(a, b)
+				local value = (b == nil) and a or b
 				setFromFraction((value - min_) / (max_ - min_))
 				saveConfigDebounced()
 			end
@@ -1094,7 +1093,8 @@ function LosarinzUI.CreateRayfieldCompat()
 				saveConfigDebounced()
 			end)
 
-			function flagEntry.Set(value)
+			function flagEntry.Set(a, b)
+				local value = (b == nil) and a or b
 				box.Text = tostring(value or "")
 				flagEntry.CurrentValue = box.Text
 				if data.Callback then
@@ -1237,7 +1237,11 @@ function LosarinzUI.CreateRayfieldCompat()
 		selectPage("Dashboard")
 	end)
 
-	buildDashboard()
+	-- Go through CreateDashboard (not buildDashboard directly) so dashboardBuilt gets
+	-- set now -- otherwise every later click on the Dashboard nav button re-ran
+	-- buildDashboard() too (its own guard never saw the first build) and stacked a
+	-- full duplicate set of cards/labels on top of the existing ones each time.
+	window.CreateDashboard()
 	selectPage("Dashboard")
 	logActivity("ok", "UI loaded successfully")
 
