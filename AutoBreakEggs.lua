@@ -270,16 +270,45 @@ end
 ---@return any
 local ANIMAL_ATTRIBUTES = { CashPerSecond = true, AnimalName = true, Rarity = true, WeightBracket = true }
 
+-- Cache per (model, attribute) pair. Without this, any model whose attribute lives
+-- on a child instead of itself causes a full GetDescendants() scan EVERY call, every
+-- frame, for every model on screen -- that's what froze/auto-closed the client before.
+local attributeCache = setmetatable({}, { __mode = "k" })
+local MISS_RETRY_SECONDS = 2
+
 local function readAttribute(instance, name)
 	local success, value = pcall(instance.GetAttribute, instance, name)
 	if success and value ~= nil and value ~= false then return value end
 
 	-- Animal data can sit on a child part of the model instead of the model itself.
 	if ANIMAL_ATTRIBUTES[name] and typeof(instance) == "Instance" and instance:IsA("Model") then
-		for _, descendant in ipairs(instance:GetDescendants()) do
-			local ok, found = pcall(descendant.GetAttribute, descendant, name)
-			if ok and found ~= nil then return found end
+		local perInstance = attributeCache[instance]
+		if not perInstance then
+			perInstance = {}
+			attributeCache[instance] = perInstance
 		end
+
+		local cached = perInstance[name]
+		if cached ~= nil then
+			if cached.value ~= nil then
+				return cached.value
+			end
+			if os.clock() - cached.missedAt < MISS_RETRY_SECONDS then
+				return nil
+			end
+		end
+
+		local found
+		for _, descendant in ipairs(instance:GetDescendants()) do
+			local ok, result = pcall(descendant.GetAttribute, descendant, name)
+			if ok and result ~= nil then
+				found = result
+				break
+			end
+		end
+
+		perInstance[name] = { value = found, missedAt = os.clock() }
+		return found
 	end
 
 	return nil
